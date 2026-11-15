@@ -42,8 +42,8 @@ describe('田園丘陵', () => {
     }
   })
 
-  it('既存の既定マップを変えず、土地配置を再現できる', () => {
-    expect(findMap(null).id).toBe('hills')
+  it('既定のマップで、土地配置を再現できる', () => {
+    expect(findMap(null).id).toBe('countryside')
     expect(createCountryside(terrain).parcels).toEqual(farm.parcels)
   })
 })

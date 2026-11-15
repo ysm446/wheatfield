@@ -1,7 +1,7 @@
 // 土地の配置は固定し、農道だけを地形に合わせて探索する。描画に依存しない。
-import type { Terrain } from './terrain'
+import { gradientNoise, type Terrain } from './terrain'
 import type { PlotResult } from './plots'
-import type { Tree } from './trees'
+import { random, type Tree } from './trees'
 
 export interface FarmRoad {
   /** false: x に沿って進む。true: z に沿って進む */
@@ -16,6 +16,8 @@ export interface Countryside {
   parcels: Int32Array
   /** 描画用 RGBA。赤は土地の色調、緑は畦、青は農道 */
   surface: Uint8Array
+  /** 樹木の幹や茂みのまわりで、機械が通れない所を 1 にした格子 */
+  blocked: Uint8Array
 }
 
 const EDGE = 230
@@ -97,22 +99,176 @@ export function createCountryside(terrain: Terrain): Countryside {
       surface[i * 4 + 2] = Math.round(Math.max(0, Math.min(1, 3.7 - distance)) * 255)
     }
   }
-  // 道沿いの細身の針葉樹。交差点は空け、幹のまわりは作業範囲から外す。
+  const blocked = new Uint8Array(n * n)
+  const trees = plantCountryside(terrain, roads, parcels, blocked)
+  return { roads, parcels, surface, trees, blocked }
+}
+
+/** 道の中心線までの水平距離(m)。いちばん近い道について返す */
+function roadDistance(roads: FarmRoad[], x: number, z: number): number {
+  let distance = Infinity
+  for (const r of roads) distance = Math.min(distance, Math.abs((r.vertical ? x : z) - roadOffset(r, r.vertical ? z : x)))
+  return distance
+}
+
+/**
+ * 田園の樹木と低木。参考はトスカーナの丘陵(糸杉の並木、道沿いの茂み、窪地の雑木林、畑の外の林)。
+ * 木のまわりは土地から外し(作業しない)、通れない格子にも印を付ける。
+ * 配置は地形のシード値で決まる。
+ */
+function plantCountryside(terrain: Terrain, roads: FarmRoad[], parcels: Int32Array, blocked: Uint8Array): Tree[] {
+  const seed = terrain.options.seed
+  const next = random(seed * 4271 + 91)
+  const n = terrain.samples
+  const cell = terrain.options.cell
   const trees: Tree[] = []
-  for (let x = -195; x <= 195; x += 26) {
-    const z = roadOffset(roads[0], x) + 7
-    if (roads.slice(1).some((r) => Math.abs(x - roadOffset(r, z)) < 12)) continue
-    trees.push({ kind: 'conifer', x, z, height: 9 + 2 * Math.sin(x), spread: 1.3, tone: 0.4, lone: true })
-    const cx = Math.round((x - terrain.origin) / terrain.options.cell)
-    const cz = Math.round((z - terrain.origin) / terrain.options.cell)
-    const radius = Math.ceil(3 / terrain.options.cell)
+  const near = (x: number, z: number, gap: number): boolean =>
+    trees.some((t) => Math.abs(t.x - x) < gap && Math.abs(t.z - z) < gap && Math.hypot(t.x - x, t.z - z) < gap)
+  /** 木を植え、幹(茂み)から clearance m までを作業と通行から外す */
+  const plant = (tree: Tree, clearance: number): void => {
+    trees.push(tree)
+    const cx = Math.round((tree.x - terrain.origin) / cell)
+    const cz = Math.round((tree.z - terrain.origin) / cell)
+    const radius = Math.ceil(clearance / cell)
     for (let dz = -radius; dz <= radius; dz++) {
       for (let dx = -radius; dx <= radius; dx++) {
-        if (Math.hypot(dx, dz) * terrain.options.cell <= 3) parcels[(cz + dz) * n + cx + dx] = -1
+        const ix = cx + dx
+        const iz = cz + dz
+        if (ix < 0 || iz < 0 || ix >= n || iz >= n || Math.hypot(dx, dz) * cell > clearance) continue
+        parcels[iz * n + ix] = -1
+        blocked[iz * n + ix] = 1
       }
     }
   }
-  return { roads, parcels, surface, trees }
+  const atCrossing = (x: number, z: number, except: FarmRoad): boolean =>
+    roads.some((r) => r !== except && Math.abs((r.vertical ? x : z) - roadOffset(r, r.vertical ? z : x)) < 12)
+  const broadleaf = (x: number, z: number, scale: number, lone: boolean): Tree => {
+    const height = (8 + next() * 6) * scale
+    return { kind: 'broadleaf', x, z, height, spread: height * (0.3 + next() * 0.1), tone: next(), lone }
+  }
+  const shrub = (x: number, z: number): Tree => {
+    const height = 1.6 + next() * 1.8
+    return { kind: 'shrub', x, z, height, spread: height * 0.65, tone: next(), lone: false }
+  }
+
+  // 1. 主道沿いの糸杉。交差点は空ける。
+  const main = roads[0]
+  for (let x = -195; x <= 195; x += 26) {
+    const z = roadOffset(main, x) + 7
+    if (atCrossing(x, z, main)) continue
+    plant({ kind: 'conifer', x, z, height: 9 + 2 * Math.sin(x), spread: 1.3, tone: 0.4, lone: true }, 3)
+  }
+
+  // 2. 糸杉の並木。中央の横断道の北半分の両側に、詰めて並べる(丘の上の家へ続く道のような景色)。
+  const avenue = roads[2]
+  for (let z = roadOffset(main, roadOffset(avenue, 0)) + 16; z <= 205; z += 8.5) {
+    const x0 = roadOffset(avenue, z)
+    for (const side of [-1, 1]) {
+      const x = x0 + side * 6.8
+      plant({ kind: 'conifer', x, z, height: 10 + next() * 3.5, spread: 1.1 + next() * 0.35, tone: 0.3 + next() * 0.3, lone: false }, 2.4)
+    }
+  }
+
+  // 3. 道沿いの茂み。畦に低木を連ね、ところどころに広葉樹を混ぜる。途切れ途切れにする。
+  for (const r of roads) {
+    for (const side of [-1, 1]) {
+      for (let s = -222; s <= 222; s += 2.3) {
+        // 道に沿ったノイズで、茂みの続く所と途切れる所を決める
+        if (gradientNoise(s / 38 + side * 7, roads.indexOf(r) * 5.3, seed + 211) < -0.15) continue
+        const t = roadOffset(r, s) + side * (4.3 + (next() - 0.5) * 0.8)
+        const x = r.vertical ? t : s + (next() - 0.5)
+        const z = r.vertical ? s + (next() - 0.5) : t
+        if (atCrossing(x, z, r) || near(x, z, 2.6)) continue
+        if (next() < 0.13) {
+          if (!near(x, z, 7)) plant(broadleaf(x, z, 0.85, false), 3.2)
+        } else {
+          plant(shrub(x, z), 1.7)
+        }
+      }
+    }
+  }
+
+  // 4. 窪地の雑木林。まわりより低い所を探し、広葉樹のかたまりと縁の低木を置く。
+  const hollows: { x: number; z: number; depth: number }[] = []
+  for (let z = -200; z <= 200; z += 10) {
+    for (let x = -200; x <= 200; x += 10) {
+      const h = terrain.heightAt(x, z)
+      let around = 0
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2
+        around += terrain.heightAt(x + Math.cos(a) * 28, z + Math.sin(a) * 28)
+      }
+      const depth = around / 8 - h
+      // 道の上や道のすぐ脇は避ける(道を林で塞がない)
+      if (depth > 0.08 && roadDistance(roads, x, z) > 16) hollows.push({ x, z, depth })
+    }
+  }
+  hollows.sort((a, b) => b.depth - a.depth)
+  const copses: { x: number; z: number }[] = []
+  for (const h of hollows) {
+    if (copses.length >= 12) break
+    if (copses.some((c) => Math.hypot(c.x - h.x, c.z - h.z) < 55)) continue
+    copses.push(h)
+  }
+  for (const c of copses) {
+    const radius = 11 + next() * 10
+    for (let k = 0; k < radius * radius * 0.16; k++) {
+      const a = next() * Math.PI * 2
+      const d = radius * Math.sqrt(next())
+      const x = c.x + Math.cos(a) * d
+      const z = c.z + Math.sin(a) * d
+      if (roadDistance(roads, x, z) < 9 || near(x, z, 4.2)) continue
+      plant(broadleaf(x, z, 1, false), 4)
+    }
+    for (let k = 0; k < radius * 2.2; k++) {
+      const a = next() * Math.PI * 2
+      const d = radius + 1 + next() * 3
+      const x = c.x + Math.cos(a) * d
+      const z = c.z + Math.sin(a) * d
+      if (roadDistance(roads, x, z) < 6 || near(x, z, 2.2)) continue
+      plant(shrub(x, z), 1.8)
+    }
+  }
+
+  // 5. 畑の中の一本立ちの大きな木。道から少し入った所に、ほかの木から離して立てる。
+  let placed = 0
+  for (let tries = 0; tries < 400 && placed < 8; tries++) {
+    const x = (next() - 0.5) * 380
+    const z = (next() - 0.5) * 380
+    const d = roadDistance(roads, x, z)
+    if (d < 12 || d > 40 || near(x, z, 45)) continue
+    plant(broadleaf(x, z, 1.25, true), 4)
+    placed++
+  }
+
+  // 6. 畑の外の林。ノイズでまとまりを作り、縁に低木を茂らせる。遠いほど間引く。
+  const spacing = 7.5
+  const outer = 520
+  for (let gz = -outer; gz <= outer; gz += spacing) {
+    for (let gx = -outer; gx <= outer; gx += spacing) {
+      const x = gx + (next() - 0.5) * spacing * 0.8
+      const z = gz + (next() - 0.5) * spacing * 0.8
+      const keep = next()
+      const border = Math.max(Math.abs(x), Math.abs(z))
+      const r = Math.hypot(x, z)
+      if (border < EDGE + 10 || r > outer) continue
+      const density = gradientNoise(x / 95 + 11, z / 95 - 4, seed + 307)
+      if (density < 0.08) continue
+      if (r > 380 && keep < 0.5) continue
+      if (density < 0.16) {
+        // 林の縁は低木
+        if (r < 330 && keep < 0.6) plant(shrub(x, z), 1.7)
+        continue
+      }
+      if (gradientNoise(x / 60 - 2, z / 60 + 6, seed + 509) > 0.2) {
+        const height = 11 + next() * 8
+        plant({ kind: 'conifer', x, z, height, spread: height * (0.16 + next() * 0.05), tone: next(), lone: false }, 2.5)
+      } else {
+        plant(broadleaf(x, z, 1.05, false), 2.5)
+      }
+    }
+  }
+  return trees
 }
 
 /** 土地境界を維持し、到達可能な部分を連結成分ごとに作業区画へ変換する。 */
@@ -138,8 +294,8 @@ export function countrysidePlots(farm: Countryside, reach: Uint8Array, n: number
         queue[tail++] = q
       }
     }
-    // 幹と畦の間など、機体の作業場所にならない切れ端は残さない。
-    if (tail * cell * cell < 25) {
+    // 幹と畦の間や、木と茂みの間など、機体の作業場所にならない切れ端は残さない。
+    if (tail * cell * cell < 200) {
       for (let k = 0; k < tail; k++) labels[queue[k]] = -2
     } else {
       plots.push({ id, area: tail * cell * cell, centerX: sx / tail, centerZ: sz / tail })

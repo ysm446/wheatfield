@@ -89,5 +89,5 @@ export const MAPS: MapSpec[] = [
 ]
 
 export function findMap(id: string | null): MapSpec {
-  return MAPS.find((map) => map.id === id) ?? MAPS.find((map) => map.id === 'hills')!
+  return MAPS.find((map) => map.id === id) ?? MAPS.find((map) => map.id === 'countryside')!
 }

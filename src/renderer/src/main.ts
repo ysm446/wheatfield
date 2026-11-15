@@ -176,11 +176,7 @@ const blocked = map.trees
       terrain.options.cell,
       terrain.origin
     )
-  : farm ? Uint8Array.from(farm.parcels, (_, i) => {
-      const x = terrain.origin + (i % terrain.samples) * terrain.options.cell
-      const z = terrain.origin + Math.floor(i / terrain.samples) * terrain.options.cell
-      return farm.trees.some((tree) => Math.hypot(x - tree.x, z - tree.z) < 3) ? 1 : 0
-    }) : undefined
+  : farm ? farm.blocked : undefined
 const treeModels = new Trees(treeList, terrain, renderer)
 scene.add(treeModels.group)
 // 動作確認用: cull=0 で、樹木を視錐台で選ばずにすべて描く(選ぶ場合と見た目を比べる)

@@ -65,7 +65,7 @@ const TRUNK_CLEARANCE = 2.5
 /** 林の縁から、芝刈り機が入れない所までの余裕(m)。張り出した枝の下までは刈る */
 const FOREST_MARGIN = 1.5
 
-function random(seed: number): () => number {
+export function random(seed: number): () => number {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0

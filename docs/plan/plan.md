@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-11-11 04:54
-更新日時: 2026-11-15 21:19
+更新日時: 2026-11-15 21:31
 
 目的は [goals.md](goals.md)、構想の詳細は [docs/reference/wheat-concept.md](../reference/wheat-concept.md) を参照。
 
@@ -51,7 +51,7 @@ W0 を進めている。現在の状況は [progress.md](progress.md) を参照�
 
 ## 未決事項
 
-[wheat-concept.md の「未決事項」](../reference/wheat-concept.md#9-未決事項)を参照。
+[wheat-concept.md の「未決事項」](../reference/wheat-concept.md#10-未決事項)を参照。
 
 ## 旧マイルストーン(芝刈りシミュレーター)
 
