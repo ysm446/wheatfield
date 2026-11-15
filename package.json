@@ -1,7 +1,7 @@
 {
-  "name": "lawn-mower",
+  "name": "wheatfield",
   "version": "0.1.0",
-  "description": "芝刈りシミュレーター",
+  "description": "小麦畑の一年",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
